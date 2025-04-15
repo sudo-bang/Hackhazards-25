@@ -1,36 +1,53 @@
 import Groq from 'groq-sdk';
 import dotenv from 'dotenv';
 
-dotenv.config();
+dotenv.config(); // Load .env variables
 
+// --- Configuration & Initialization ---
 if (!process.env.GROQ_API_KEY) {
-    console.error("FATAL ERROR: GROQ_API_KEY is not set. Cannot initialize GroqProcessor.");
+    console.error("FATAL ERROR: GROQ_API_KEY is not set.");
+    // process.exit(1); // Or handle differently
 }
-
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
-const VISION_MODEL = 'meta-llama/llama-4-scout-17b-16e-instruct';
-const TEXT_MODEL = 'llama-3.3-70b-versatile';
-const VISION_MODEL_IMAGE_LIMIT = 5;
 
+// --- Model Definitions (Verify these IDs from Groq Docs) ---
+// Use the model you decided on (LLaVA or Llama Scout)
+const VISION_MODEL = 'meta-llama/llama-4-scout-17b-16e-instruct';
+// Use a powerful text model for synthesis
+const TEXT_MODEL = 'llama-3.3-70b-versatile';
+const VISION_MODEL_IMAGE_LIMIT = 5; // Max images per call to VISION_MODEL
+
+/**
+ * Generates Markdown documentation by analyzing video frame chunks
+ * and synthesizing results with the transcript.
+ * @param {string} transcript The audio transcript.
+ * @param {string[]} base64Frames Array of base64 encoded image strings.
+ * @returns {Promise<{summary: string, modelUsed: string}>} Contains final Markdown doc and the model used for synthesis.
+ */
 export async function summarizeVideoContent(transcript, base64Frames) {
-    const modelForFinalSummary = TEXT_MODEL;
-    console.log(`GROQ_PROC(Video-Multi): Processing ${base64Frames.length} frames in chunks of ${VISION_MODEL_IMAGE_LIMIT}...`);
+    const modelForFinalSynthesis = TEXT_MODEL;
+    console.log(`GROQ_PROC(Docs): Processing ${base64Frames.length} frames in chunks of ${VISION_MODEL_IMAGE_LIMIT} for doc generation...`);
 
     if (!transcript) {
-        throw new Error("Transcript is required for video summarization.");
+        // Maybe return an error markdown message?
+        return { summary: "# Error\n\nTranscript is required to generate documentation.", modelUsed: 'N/A' };
     }
 
     const partialAnalyses = [];
     const numFrames = base64Frames.length;
 
+    // --- Handle case with no frames ---
     if (numFrames === 0) {
-        console.log("GROQ_PROC(Video-Multi): No frames provided. Falling back to text-only summary.");
-        return await summarizeAudioContent(transcript);
+        console.log("GROQ_PROC(Docs): No frames provided. Attempting doc generation from transcript only.");
+        // Adapt the synthesis prompt for transcript-only case
+        return await generateDocFromTextOnly(transcript, modelForFinalSynthesis);
     }
 
+    // --- Calculate Chunks ---
     const numChunks = Math.ceil(numFrames / VISION_MODEL_IMAGE_LIMIT);
-    console.log(`GROQ_PROC(Video-Multi): Will process in ${numChunks} chunk(s).`);
+    console.log(`GROQ_PROC(Docs): Will process in ${numChunks} chunk(s).`);
 
+    // --- Sequentially Analyze Each Chunk ---
     for (let i = 0; i < numChunks; i++) {
         const chunkIndex = i + 1;
         const start = i * VISION_MODEL_IMAGE_LIMIT;
@@ -40,116 +57,175 @@ export async function summarizeVideoContent(transcript, base64Frames) {
 
         if (currentChunkFrames.length === 0) continue;
 
-        console.log(`GROQ_PROC(Video-Multi): Analyzing Chunk ${chunkIndex}/${numChunks} (${frameNumbers}, ${currentChunkFrames.length} frames) using ${VISION_MODEL}...`);
+        console.log(`GROQ_PROC(Docs): Analyzing Chunk ${chunkIndex}/${numChunks} (${frameNumbers}, ${currentChunkFrames.length} frames) using ${VISION_MODEL}...`);
 
+        // Prepare payload for the Vision model - FOCUS ON EXTRACTION
         const userMessages = [
             {
                 type: "text",
-                text: `This is analysis part ${chunkIndex} of ${numChunks}. Analyze the key visual information in the following ${currentChunkFrames.length} frame(s) (${frameNumbers}). Use the full audio transcript provided below ONLY for context about what might be happening visually. Focus your response on describing what is visible in these specific frames.\n\nFull Transcript for Context:\n${transcript}`
+                text: `This is part ${chunkIndex} of ${numChunks} analyzing visual frames from a coding demo video. Use the full transcript ONLY for context. Your task is to EXTRACT specific technical details visible in the following ${currentChunkFrames.length} frame(s) (${frameNumbers}). List any:
+1. Complete commands in terminals.
+2. Readable code snippets (as accurately as possible).
+3. Filenames shown.
+4. Specific UI elements clicked/configured.
+5. Configuration values displayed.
+Present ONLY the extracted details for this segment, do not add conversational text or summaries.
+
+Full Transcript (for context only):
+'''
+${transcript}
+'''`
             }
         ];
 
         currentChunkFrames.forEach((base64Data) => {
              if (typeof base64Data === 'string' && base64Data.startsWith('data:image/jpeg;base64,')) {
                 userMessages.push({ type: "image_url", image_url: { url: base64Data } });
-             } else { console.warn(`GROQ_PROC(Video-Multi): Skipping invalid frame data in chunk ${chunkIndex}.`); }
+             } else { console.warn(`GROQ_PROC(Docs): Skipping invalid frame data in chunk ${chunkIndex}.`); }
         });
 
         const visionPayload = {
             model: VISION_MODEL,
             messages: [
-                { role: "system", content: `You are an AI analyzing a segment of video frames (${frameNumbers}) using the full transcript for context. Describe visual elements.` },
+                { role: "system", content: `You are an AI assistant extracting technical details (code, commands, filenames, UI elements, config values) visible in video frames (${frameNumbers}), using the transcript for context.` },
                 { role: "user", content: userMessages }
             ],
-            max_tokens: 768
+            max_tokens: 1024 // Allow more tokens for potentially verbose extractions
         };
 
+        // Call Groq Vision API for the current chunk
         try {
+            // Add slight delay maybe? Optional.
+            // if(i > 0) await new Promise(resolve => setTimeout(resolve, 300));
             const completion = await groq.chat.completions.create(visionPayload);
             const analysisText = completion.choices[0]?.message?.content?.trim();
             if (analysisText) {
                 partialAnalyses.push({ chunk: chunkIndex, frameRange: frameNumbers, analysis: analysisText });
-                console.log(`GROQ_PROC(Video-Multi): Analysis received for Chunk ${chunkIndex}.`);
+                console.log(`GROQ_PROC(Docs): Extraction received for Chunk ${chunkIndex}.`);
             } else {
-                console.warn(`GROQ_PROC(Video-Multi): Received empty analysis for Chunk ${chunkIndex}. Storing placeholder.`);
-                partialAnalyses.push({ chunk: chunkIndex, frameRange: frameNumbers, analysis: "[Analysis for this segment was empty]" });
+                console.warn(`GROQ_PROC(Docs): Received empty extraction for Chunk ${chunkIndex}. Storing placeholder.`);
+                partialAnalyses.push({ chunk: chunkIndex, frameRange: frameNumbers, analysis: "[No specific details extracted for this segment]" });
             }
         } catch (error) {
-            console.error(`GROQ_PROC(Video-Multi): Error analyzing Chunk ${chunkIndex} (${frameNumbers}) using ${VISION_MODEL}:`, error.message);
-            partialAnalyses.push({ chunk: chunkIndex, frameRange: frameNumbers, analysis: `[Error during analysis: ${error.message}]` });
+            console.error(`GROQ_PROC(Docs): Error extracting details from Chunk ${chunkIndex} (${frameNumbers}) using ${VISION_MODEL}:`, error.message);
+            partialAnalyses.push({ chunk: chunkIndex, frameRange: frameNumbers, analysis: `[Error during detail extraction: ${error.message}]` });
         }
-    }
+    } // --- End of chunk processing loop ---
 
-    const successfulAnalyses = partialAnalyses.filter(pa => !pa.analysis.startsWith("[Error") && !pa.analysis.startsWith("[Analysis for this segment was empty]"));
+    // --- Check if any analyses were generated ---
+    const successfulAnalyses = partialAnalyses.filter(pa => !pa.analysis.startsWith("[Error") && !pa.analysis.startsWith("[No specific details"));
 
     if (successfulAnalyses.length === 0) {
-         console.warn("GROQ_PROC(Video-Multi): No successful partial analyses generated from frames. Falling back to text-only summary.");
-         return await summarizeAudioContent(transcript);
+         console.warn("GROQ_PROC(Docs): No details extracted from visual frames. Attempting doc generation from transcript only.");
+         return await generateDocFromTextOnly(transcript, modelForFinalSynthesis);
     }
 
-    console.log(`GROQ_PROC(Video-Multi): Synthesizing ${successfulAnalyses.length} partial visual analyses with transcript using ${modelForFinalSummary}...`);
+    // --- Final Synthesis Step (Generate Markdown) ---
+    console.log(`GROQ_PROC(Docs): Synthesizing ${successfulAnalyses.length} visual detail sets with transcript into Markdown using ${modelForFinalSynthesis}...`);
 
-    let combinedAnalyses = "";
+    // Combine analyses into a single string for the prompt
+    let combinedVisualDetails = "";
     successfulAnalyses.forEach(pa => {
-        combinedAnalyses += `\nAnalysis of ${pa.frameRange}:\n${pa.analysis}\n---`;
+        combinedVisualDetails += `\nDetails Extracted from ${pa.frameRange}:\n${pa.analysis}\n---`;
     });
 
-    const synthesisPrompt = `Generate a comprehensive summary of the video based on the full audio transcript and the following sequential analyses of key visual frame segments.\n\nFull Audio Transcript:\n${transcript}\n\nVisual Segment Analyses:${combinedAnalyses}\n\nFinal Comprehensive Summary:`;
+    // The Technical Writer Prompt
+    const synthesisPrompt = `You are an AI technical writer generating documentation from a video transcript and extracted visual details (like code, commands, filenames, UI interactions). Your goal is to create a well-structured Markdown document explaining the product and how to set it up and use it, based *only* on the provided information.
+
+Use standard Markdown formatting: headings (#, ##, ###), lists (* or -), inline code (\`), and code blocks (\`\`\`language ... \`\`\`). Structure the document logically (e.g., Introduction, Prerequisites, Setup, Configuration, Usage).
+
+Extract and accurately format commands, code snippets, filenames, and setup steps. Prioritize details explicitly extracted from visuals if available. If information seems conflicting or unclear, make a reasonable inference or note the uncertainty.
+
+**Source Information:**
+
+Full Audio Transcript:
+'''
+${transcript}
+'''
+
+Extracted Visual Details from Frame Segments:
+'''
+${combinedVisualDetails}
+'''
+
+**Generate the complete Markdown documentation file below. Start directly with the Markdown content:**
+`; // Removed the example structure to let the AI generate it fully
 
     const synthesisPayload = {
-        model: modelForFinalSummary,
+        model: modelForFinalSynthesis,
         messages: [
-            { role: "system", content: "You are an expert AI assistant synthesizing a full transcript and multiple sequential analyses of video frame segments into a single, coherent summary." },
+            { role: "system", content: "You are an AI technical writer creating Markdown documentation from a transcript and extracted visual details (code, commands, filenames, UI interactions) from a video demo." },
             { role: "user", content: synthesisPrompt }
         ],
-        max_tokens: 1536
+        // Increase max_tokens significantly for potentially long documentation
+        max_tokens: 3500 // Adjust based on expected doc length and model limits
     };
 
+    // Call Groq Text API for final Markdown generation
     try {
         const finalCompletion = await groq.chat.completions.create(synthesisPayload);
-        const finalSummary = finalCompletion.choices[0]?.message?.content?.trim();
-        if (!finalSummary) {
-            throw new Error("Final synthesis resulted in an empty summary.");
+        const finalMarkdown = finalCompletion.choices[0]?.message?.content?.trim();
+        if (!finalMarkdown) {
+            throw new Error("Final Markdown generation resulted in an empty response.");
         }
-        console.log("GROQ_PROC(Video-Multi): Final synthesis successful.");
-        return { summary: finalSummary, modelUsed: modelForFinalSummary };
+        console.log("GROQ_PROC(Docs): Final Markdown generation successful.");
+        // Return Markdown and the model used for this final step
+        return { summary: finalMarkdown, modelUsed: modelForFinalSynthesis };
     } catch (error) {
-         console.error(`GROQ_PROC(Video-Multi): Error during final synthesis (${modelForFinalSummary}):`, error);
-         throw new Error(`Final summary synthesis failed: ${error.message}`);
+         console.error(`GROQ_PROC(Docs): Error during final Markdown generation (${modelForFinalSynthesis}):`, error);
+         throw new Error(`Final Markdown documentation generation failed: ${error.message}`);
     }
 }
 
+// Helper function for transcript-only documentation generation (fallback)
+async function generateDocFromTextOnly(transcript, model) {
+     console.log(`GROQ_PROC(Docs-TextOnly): Generating docs from transcript only using ${model}...`);
+     const prompt = `You are an AI technical writer. Generate Markdown documentation for a product based ONLY on the following audio transcript from a demonstration video. Structure it logically (Introduction, Setup, Usage, etc.) using Markdown headings, lists, and code blocks where appropriate. Extract commands and steps mentioned.\n\nTranscript:\n'''\n${transcript}\n'''\n\nGenerate the complete Markdown documentation file below:`;
+     const payload = {
+         model: model,
+         messages: [
+             { role: "system", content: "You are an AI technical writer creating Markdown documentation from an audio transcript." },
+             { role: "user", content: prompt }
+         ],
+         max_tokens: 3000
+     };
+      try {
+        const completion = await groq.chat.completions.create(payload);
+        const markdown = completion.choices[0]?.message?.content?.trim();
+        if (!markdown) throw new Error("Text-only doc generation was empty.");
+        return { summary: markdown, modelUsed: model };
+    } catch (error) {
+         console.error(`GROQ_PROC(Docs-TextOnly): Error during text-only doc generation (${model}):`, error);
+         // Return an error message in Markdown format
+         return { summary: `# Error\n\nFailed to generate documentation from transcript: ${error.message}`, modelUsed: model };
+    }
+}
+
+
+/**
+ * Summarizes text content using Groq text model. (Used for audio-only original purpose)
+ * Kept separate in case you want different prompts/logic for pure summarization vs doc generation.
+ * @param {string} transcript The audio transcript.
+ * @returns {Promise<{summary: string, modelUsed: string}>}
+ */
 export async function summarizeAudioContent(transcript) {
     const modelUsed = TEXT_MODEL;
-    console.log(`GROQ_PROC(Audio): Preparing text request for Groq model: ${modelUsed}`);
+    console.log(`GROQ_PROC(AudioSumm): Preparing text summary request for Groq model: ${modelUsed}`);
 
      if (!transcript || transcript.trim().length === 0) {
-         console.warn("GROQ_PROC(Audio): Attempted to summarize empty or invalid transcript.");
          return { summary: "[No transcript provided or transcript was empty]", modelUsed: modelUsed };
     }
 
     const payload = {
         model: modelUsed,
-        messages: [
-            { role: "system", content: "You are an expert at summarizing audio transcripts concisely." },
-            { role: "user", content: `Please provide a concise summary of the following transcript:\n\n${transcript}` }
-        ],
+        messages: [ { role: "system", content: "You are an expert at summarizing audio transcripts concisely." }, { role: "user", content: `Please provide a concise summary of the following transcript:\n\n${transcript}` } ],
         max_tokens: 512
     };
-
-    console.log(`GROQ_PROC(Audio): Sending request to Groq (${modelUsed})...`);
+    console.log(`GROQ_PROC(AudioSumm): Sending request to Groq (${modelUsed})...`);
     try {
-        const completion = await groq.chat.completions.create(payload);
-        const summary = completion.choices[0]?.message?.content?.trim();
-        if (!summary) {
-             console.warn(`GROQ_PROC(Audio): Groq API returned empty summary for text.`);
-             return { summary: "[Summary generation failed or returned empty]", modelUsed: modelUsed };
-        }
-        console.log("GROQ_PROC(Audio): Groq Text processing successful.");
+        const completion = await groq.chat.completions.create(payload); const summary = completion.choices[0]?.message?.content?.trim();
+        if (!summary) { return { summary: "[Summary generation failed or returned empty]", modelUsed: modelUsed }; }
+        console.log("GROQ_PROC(AudioSumm): Groq Text summary processing successful.");
         return { summary: summary, modelUsed: modelUsed };
-    } catch (error) {
-        console.error(`GROQ_PROC(Audio): Groq API Error (${modelUsed}):`, error);
-        throw new Error(`Groq API request failed (${modelUsed}) for text summary: ${error.message}`);
-    }
+    } catch (error) { console.error(`GROQ_PROC(AudioSumm): Groq API Error (${modelUsed}):`, error); throw new Error(`Groq API request failed (${modelUsed}) for text summary: ${error.message}`); }
 }
-
