@@ -130,31 +130,65 @@ ${transcript}
     });
 
     // The Technical Writer Prompt
-    const synthesisPrompt = `You are an AI technical writer generating documentation from a video transcript and extracted visual details (like code, commands, filenames, UI interactions). Your goal is to create a well-structured Markdown document explaining the product and how to set it up and use it, based *only* on the provided information.
-
-Use standard Markdown formatting: headings (#, ##, ###), lists (* or -), inline code (\`), and code blocks (\`\`\`language ... \`\`\`). Structure the document logically (e.g., Introduction, Prerequisites, Setup, Configuration, Usage).
-
-Extract and accurately format commands, code snippets, filenames, and setup steps. Prioritize details explicitly extracted from visuals if available. If information seems conflicting or unclear, make a reasonable inference or note the uncertainty.
-
-**Source Information:**
-
-Full Audio Transcript:
-'''
-${transcript}
-'''
-
-Extracted Visual Details from Frame Segments:
-'''
-${combinedVisualDetails}
-'''
-
-**Generate the complete Markdown documentation file below. Start directly with the Markdown content:**
-`; // Removed the example structure to let the AI generate it fully
+    const synthesisPrompt = `
+    You are an AI technical writer tasked with creating **professional, developer-grade documentation** based on a video transcript and extracted visual details (such as code, commands, filenames, API references, and UI interactions). 
+    
+    You must generate a **clear, detailed, and comprehensive Markdown document**, closely matching the quality and depth found in official SDK documentation like the Android SDK or React SDK guides.
+    
+    **Guidelines:**
+    
+    - **Start immediately with Markdown content.** No preambles, no explanations.
+    - **Use clean, structured Markdown formatting**:
+      - Headings (\`#\`, \`##\`, \`###\`, etc.) to organize content hierarchically.
+      - Bullet points (\`-\` or \`*\`) for lists.
+      - Numbered steps for sequential instructions.
+      - Inline code formatting (\` \`) for filenames, commands, paths, and code references.
+      - Syntax-highlighted code blocks (\`\`\`language\n...\n\`\`\`) for code snippets, commands, and examples.
+    - **Standard Document Sections** (if applicable):
+      - # Introduction
+      - # Prerequisites
+      - # Installation
+      - # Configuration
+      - # Usage
+      - # Examples
+      - # Best Practices
+      - # Troubleshooting
+      - # Additional Resources
+    - **Prioritize extracted visual details** for accuracy.
+    - **Summarize and clarify complex concepts** if the transcript is ambiguous.
+    - **Infer missing logical connections if necessary, but clearly mark them as notes or assumptions** when appropriate.
+    - **Match the tone of professional SDKs**:
+      - Concise but complete.
+      - Neutral, precise, and instructional language.
+      - Use active voice and direct instructions ("Run this command...", "Edit the file...").
+    - **Error Handling**:
+      - Include common errors, warnings, or tips based on information provided.
+    - **Code Quality**:
+      - Ensure code snippets are clean, properly indented, and complete where possible.
+    
+    ---
+    
+    **Source Information:**
+    
+    **Full Audio Transcript:**
+    '''
+    ${transcript}
+    '''
+    
+    **Extracted Visual Details from Frame Segments:**
+    '''
+    ${combinedVisualDetails}
+    '''
+    
+    ---
+    **Generate the complete, professional Markdown documentation below:**
+    `;
+     // Removed the example structure to let the AI generate it fully
 
     const synthesisPayload = {
         model: modelForFinalSynthesis,
         messages: [
-            { role: "system", content: "You are an AI technical writer creating Markdown documentation from a transcript and extracted visual details (code, commands, filenames, UI interactions) from a video demo." },
+            { role: "system", content: "You are an AI technical writer tasked with creating **professional, developer-grade documentation** based on a video transcript and extracted visual details (such as code, commands, filenames, API references, and UI interactions)." },
             { role: "user", content: synthesisPrompt }
         ],
         // Increase max_tokens significantly for potentially long documentation
