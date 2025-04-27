@@ -55,14 +55,14 @@ export function SummaryDisplay({ summary, modelUsed }: SummaryDisplayProps) {
                         <CardTitle className="text-xl text-transparent bg-clip-text bg-gradient-to-r from-blue-300 to-purple-400">Generated Documentation</CardTitle>
                         {modelUsed && <CardDescription className='text-xs text-gray-500 pt-1'>Synthesized using: {modelUsed}</CardDescription>}
                     </div>
-                    <Button variant="ghost" size="sm" onClick={handleCopy} title="Copy Markdown">
+                    <Button variant="ghost" size="sm" onClick={handleCopy} title="Copy Markdown" className="text-white">
                         <ClipboardCopy className="h-4 w-4 mr-1" /> Copy
                     </Button>
                 </div>
             </CardHeader>
             <CardContent>
                 {/* Apply Tailwind Typography prose classes for styling */}
-                <div className="prose prose-sm prose-invert max-w-none prose-pre:bg-gray-900/70 prose-pre:border prose-pre:border-gray-600 prose-pre:rounded-md prose-code:before:content-none prose-code:after:content-none prose-code:bg-gray-700 prose-code:text-emerald-300 prose-code:px-1 prose-code:py-0.5 prose-code:rounded">
+                <div className="prose prose-sm text-white prose-invert max-w-none prose-pre:bg-gray-900/70 prose-pre:border prose-pre:border-gray-600 prose-pre:rounded-md prose-code:before:content-none prose-code:after:content-none prose-code:bg-gray-700 prose-code:text-emerald-300 prose-code:px-1 prose-code:py-0.5 prose-code:rounded">
                     <ReactMarkdown
                         remarkPlugins={[remarkGfm]} // Enable GitHub Flavored Markdown
                         rehypePlugins={[rehypeRaw]} // Allow raw HTML (use with caution)
